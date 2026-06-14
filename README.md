@@ -54,9 +54,10 @@ SDK's `grpc.ssl_target_name_override`.
 
 ## Examples
 
-The Ubidium runs a `TimingSystem` gRPC server on port **443**. In both examples
-`<device-id>` (e.g. `U-40153`) is required because it is also used as the TLS
-server name (see [TLS](#tls) above).
+The Ubidium runs a `TimingSystem` gRPC server on port **443**. Every example
+parses its CLI with [`clap`](https://crates.io/crates/clap), so `--help` lists
+its options. `--device-id` (e.g. `U-40153`) is required by the client examples
+because it is also used as the TLS server name (see [TLS](#tls) above).
 
 ### Get Ubidium system info
 
@@ -67,10 +68,10 @@ example opens `OpenStatusStream`, sends one `CmdGetStatus`, and prints the first
 `Status` snapshot it receives.
 
 ```bash
-cargo run --example systeminfo -- <host[:port]> <device-id>
+cargo run --example systeminfo -- --host <host[:port]> --device-id <id>
 
 # e.g.
-cargo run --example systeminfo -- 192.168.1.112:443 U-40153
+cargo run --example systeminfo -- --host 192.168.1.112:443 --device-id U-40153
 ```
 
 ### Listen for passings
@@ -80,10 +81,84 @@ one `CmdGetPassings` requesting every new passing from now on, and then prints
 each transponder passing as it arrives until you stop it with Ctrl-C.
 
 ```bash
-cargo run --example passings -- <host[:port]> <device-id>
+cargo run --example passings -- --host <host[:port]> --device-id <id>
 
 # e.g.
-cargo run --example passings -- 192.168.1.112:443 U-40153
+cargo run --example passings -- --host 192.168.1.112:443 --device-id U-40153
+```
+
+### Download stored passings (by ID range)
+
+The [`stored_passings`](examples/stored_passings.rs) example downloads passings
+using the **full** `CmdGetPassings` request, exposing every selector it offers.
+Pick exactly one **start** and one **end** (enforced by `clap` argument groups):
+
+- start: `--start-ref <now|current-file|first-file>`, `--start-id <ID>`, or
+  `--start-no <FILE:NO>`
+- end: `--end-ref <until-stopped|currently-existing|end-of-file>` or
+  `--end-count <N>`
+
+With `--end-ref until-stopped` the stream keeps delivering future passings until
+you press Ctrl-C; the other end selectors terminate on their own. Run with
+`--help` for the full list.
+
+```bash
+# all stored passings of the current file:
+cargo run --example stored_passings -- --host 192.168.1.112:443 --device-id U-40153 \
+    --start-ref current-file --end-ref currently-existing
+
+# 50 passings starting at ID 1000:
+cargo run --example stored_passings -- --host 192.168.1.112:443 --device-id U-40153 \
+    --start-id 1000 --end-count 50
+
+# from file 3 / passing 1 to the end of that file:
+cargo run --example stored_passings -- --host 192.168.1.112:443 --device-id U-40153 \
+    --start-no 3:1 --end-ref end-of-file
+```
+
+### Get full Ubidium status
+
+The [`status`](examples/status.rs) example is the verbose counterpart to
+`systeminfo`: it opens `OpenStatusStream`, sends one `CmdGetStatus`, and dumps
+**every field** of the first `Status` snapshot (active/passive equipment, GPS,
+batteries, power, firmware update, ...).
+
+```bash
+cargo run --example status -- --host <host[:port]> --device-id <id>
+
+# e.g.
+cargo run --example status -- --host 192.168.1.112:443 --device-id U-40153
+```
+
+### Full client (port of the Go `cmd/client`)
+
+The [`client`](examples/client.rs) example is a Rust port of the Go SDK's client
+(fixed-IP mode): it connects to a Ubidium, presses `KEY_BACK` twice via the
+unary `PressKey` RPC, then opens **both** the status and passing streams and
+prints updates from each concurrently until Ctrl-C.
+
+```bash
+cargo run --example client -- --host <host[:port]> --device-id <id>
+
+# e.g.
+cargo run --example client -- --host 192.168.1.112:443 --device-id U-40153
+```
+
+### TimingServer (port of the Go `cmd/server`)
+
+The [`server`](examples/server.rs) example flips the roles: it is a Rust port of
+the Go SDK's server, implementing the `TimingServer` gRPC service that **Ubidiums
+connect out to**. Configure a Ubidium's "custom server" with this machine's
+address/port. For each stream a Ubidium opens it subscribes to passings (and
+acknowledges them), status updates, and sends one `PressKey` command. It serves
+TLS using the bundled example server certificate
+(`certs/example-server/`).
+
+```bash
+cargo run --example server -- --listen <addr>
+
+# e.g. listen on all interfaces, port 8443
+cargo run --example server -- --listen 0.0.0.0:8443
 ```
 
 ## Layout
@@ -95,6 +170,11 @@ cargo run --example passings -- 192.168.1.112:443 U-40153
 | `src/lib.rs` | `ubidium::pb` generated types + clients, bundled CA cert |
 | `examples/systeminfo.rs` | Example: connect and print system info |
 | `examples/passings.rs` | Example: connect and listen for passings |
+| `examples/stored_passings.rs` | Example: download stored passings by ID range |
+| `examples/status.rs` | Example: dump the full Ubidium status |
+| `examples/client.rs` | Example: full client, port of the Go `cmd/client` |
+| `examples/server.rs` | Example: `TimingServer`, port of the Go `cmd/server` |
+| `certs/example-server/` | Example server certificate + key (for `server`) |
 | `certs/cacert.pem` | `RACE RESULT TD proxy` CA certificate |
 
 ## License

@@ -27,10 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     tonic_build::configure()
-        // We only act as a gRPC *client* (the Ubidium is the server), so the
-        // server-side trait scaffolding is not needed.
-        .build_server(false)
+        // Generate both the client side (to talk *to* a Ubidium's TimingSystem
+        // server) and the server side (to act as a TimingServer that Ubidiums
+        // connect to, as in the `server` example).
         .build_client(true)
+        .build_server(true)
         .compile_protos(&proto_paths, &[proto_dir])?;
 
     // Rebuild if any proto changes.

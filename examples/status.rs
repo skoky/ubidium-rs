@@ -1,10 +1,14 @@
 //! Example: connect to a Race Result **Ubidium** timing decoder over gRPC/TLS
-//! and print its system info (device ID, name, firmware version, customer
-//! number, temperature, GPS, battery, ...).
+//! and print its **full status** — every field of the `Status` message,
+//! including the nested active/passive equipment, GPS, batteries, power and
+//! firmware-update sections.
 //!
-//! The Ubidium runs a `TimingSystem` gRPC server on port **443**. "System info"
-//! is delivered through the status stream: we open `OpenStatusStream`, send a
-//! single `CmdGetStatus`, and print the first `Status` message we get back.
+//! This is the verbose counterpart to the `systeminfo` example (which only
+//! prints a hand-picked summary). Here we dump the entire decoded `Status`.
+//!
+//! The Ubidium delivers status through the **status stream**: we open
+//! `OpenStatusStream`, send one `CmdGetStatus`, and print the first complete
+//! `Status` snapshot we receive.
 //!
 //! ## TLS
 //!
@@ -16,10 +20,10 @@
 //! ## Usage
 //!
 //! ```text
-//! systeminfo --host <host[:port]> --device-id <id>
+//! status --host <host[:port]> --device-id <id>
 //!
 //! # e.g.
-//! systeminfo --host 192.168.1.112:443 --device-id U-40153
+//! status --host 192.168.1.112:443 --device-id U-40153
 //! ```
 
 use anyhow::{Context, Result, bail};
@@ -31,7 +35,7 @@ use ubidium::pb::{
     timing_system_client::TimingSystemClient,
 };
 
-/// Print a Race Result Ubidium's system info (a single status snapshot).
+/// Dump the full status of a Race Result Ubidium (every field).
 #[derive(Parser, Debug)]
 #[command(about, long_about = None)]
 struct Cli {
@@ -60,7 +64,7 @@ async fn main() -> Result<()> {
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     tx.send(StatusRequest {
         cmd: Some(status_request::Cmd::Get(CmdGetStatus {
-            // We only want a single snapshot, not continuous updates.
+            // A single, complete snapshot is enough — no continuous updates.
             r#continue: false,
             push_time: None,
         })),
@@ -73,7 +77,6 @@ async fn main() -> Result<()> {
         .await
         .context("OpenStatusStream RPC failed")?;
 
-    // The Ubidium reports its device ID in the response trailers/headers too.
     if let Some(id) = response.metadata().get("device-id") {
         if let Ok(id) = id.to_str() {
             println!("Server reported device-id header: {id}");
@@ -82,68 +85,25 @@ async fn main() -> Result<()> {
 
     let mut stream = response.into_inner();
 
-    // Read the first status message — that is the system info snapshot.
     while let Some(msg) = stream.message().await.context("reading status stream")? {
         match msg.response {
             Some(status_response::Response::Status(status)) => {
-                print_system_info(&status);
+                // Dump every field of the decoded Status message. The pretty
+                // `Debug` output walks the whole nested structure (active /
+                // passive equipment, GPS, batteries, power, update, ...).
+                println!("\n=== Ubidium full status ===");
+                println!("{status:#?}");
+                println!("===========================");
                 break; // got our snapshot, done
             }
             Some(status_response::Response::Error(err)) => {
                 bail!("Ubidium returned an error: {} (code {})", err.message, err.code);
             }
-            None => {
-                eprintln!("Received empty status response, waiting for the next one...");
-            }
+            None => eprintln!("Received empty status response, waiting for the next one..."),
         }
     }
 
     // Dropping `tx` closes the outbound stream and lets the server tear down.
     drop(tx);
     Ok(())
-}
-
-/// Pretty-print the interesting fields of a `Status` snapshot.
-fn print_system_info(status: &ubidium::pb::Status) {
-    println!("\n=== Ubidium system info ===");
-    print_opt("Device ID", &status.id);
-    print_opt("Name", &status.name);
-    print_opt("Firmware version", &status.version);
-
-    if let Some(cust_no) = status.cust_no {
-        println!("Customer number  : {cust_no}");
-    }
-    if let Some(temp) = status.temperature {
-        println!("Board temperature: {temp:.1} °C");
-    }
-    if let Some(passing_id) = status.passing_id {
-        println!("Latest passing id: {passing_id}");
-    }
-
-    if let Some(time) = &status.time {
-        if let Some(utc) = &time.utc {
-            println!("Device time (UTC): {}s +{}ns, local offset {}s", utc.seconds, utc.nanos, time.offset);
-        }
-    }
-
-    match status.gps.as_ref().and_then(|g| g.data.as_ref()) {
-        Some(ubidium::pb::status::gps::Data::Location(loc)) => {
-            println!("GPS              : fix at lat {:.6}, long {:.6}, alt {:.1}m", loc.lat, loc.long, loc.alt);
-        }
-        Some(ubidium::pb::status::gps::Data::NoFix(_)) => println!("GPS              : no fix"),
-        None => {}
-    }
-
-    if let Some(update) = &status.update {
-        if let Some(v) = &update.update_version {
-            println!("Update available : {v} (installed: {})", update.installed.unwrap_or(false));
-        }
-    }
-    println!("===========================");
-}
-
-fn print_opt(label: &str, value: &Option<String>) {
-    if let Some(v) = value {
-        println!("{label:<17}: {v}");
-    }
 }

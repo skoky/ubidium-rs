@@ -18,47 +18,43 @@
 //! ## Usage
 //!
 //! ```text
-//! passings <host[:port]> <device-id>
+//! passings --host <host[:port]> --device-id <id>
 //!
 //! # e.g.
-//! passings 192.168.1.112:443 U-40153
+//! passings --host 192.168.1.112:443 --device-id U-40153
 //! ```
 
-use std::time::Duration;
-
 use anyhow::{Context, Result, bail};
+use clap::Parser;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
-use ubidium::CA_CERT_PEM;
 use ubidium::pb::{
     CmdGetPassings, PassingRequest, cmd_get_passings, passing, passing_request, passing_response,
     timing_system_client::TimingSystemClient, transponder,
 };
 
+/// Listen for live passings from a Race Result Ubidium until Ctrl-C.
+#[derive(Parser, Debug)]
+#[command(about, long_about = None)]
+struct Cli {
+    /// Ubidium host or IP, optionally with `:port` (defaults to port 443).
+    #[arg(long)]
+    host: String,
+
+    /// Device ID, e.g. `U-40153` (also used as the TLS server name).
+    #[arg(long)]
+    device_id: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let (host, device_id) = match (args.next(), args.next()) {
-        (Some(host), Some(device_id)) => (host, device_id),
-        _ => {
-            eprintln!("usage: passings <host[:port]> <device-id>");
-            eprintln!("   e.g. passings 192.168.1.112:443 U-40153");
-            std::process::exit(2);
-        }
-    };
+    let Cli { host, device_id } = Cli::parse();
 
-    // Default to the Ubidium gRPC port (443) if the caller didn't supply one.
-    let authority = if host.contains(':') {
-        host.clone()
-    } else {
-        format!("{host}:443")
-    };
-    let endpoint_url = format!("https://{authority}");
+    println!("Connecting to {host} (device id / TLS name: {device_id}) ...");
 
-    println!("Connecting to {endpoint_url} (device id / TLS name: {device_id}) ...");
-
-    let channel = connect(&endpoint_url, &device_id).await?;
+    let channel = ubidium::connect(&host, &device_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("could not connect to {host}: {e}"))?;
     let mut client = TimingSystemClient::new(channel);
 
     // OpenPassingStream is bi-directional: we stream PassingRequests out and
@@ -119,30 +115,6 @@ async fn main() -> Result<()> {
     // Dropping `tx` closes the outbound stream and lets the server tear down.
     drop(tx);
     Ok(())
-}
-
-/// Build a TLS gRPC channel to the Ubidium, pinning the bundled CA and
-/// overriding the TLS server name to the device ID.
-async fn connect(endpoint_url: &str, device_id: &str) -> Result<Channel> {
-    let tls = ClientTlsConfig::new()
-        .ca_certificate(Certificate::from_pem(CA_CERT_PEM))
-        // The server cert's CN/SAN is the device ID, not the IP we dial.
-        .domain_name(device_id.to_string());
-
-    let channel = Channel::from_shared(endpoint_url.to_string())
-        .context("invalid endpoint URL")?
-        .tls_config(tls)
-        .context("TLS configuration failed")?
-        // gRPC keepalive, matching the Python SDK's channel options.
-        .keep_alive_while_idle(true)
-        .http2_keep_alive_interval(Duration::from_secs(20))
-        .keep_alive_timeout(Duration::from_secs(2))
-        .connect_timeout(Duration::from_secs(10))
-        .connect()
-        .await
-        .with_context(|| format!("could not connect to {endpoint_url}"))?;
-
-    Ok(channel)
 }
 
 /// Handle one `PassingResponse` from the stream.

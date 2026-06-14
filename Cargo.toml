@@ -1,12 +1,12 @@
 [package]
 name = "ubidium-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Rust gRPC bindings for the Race Result Ubidium timing decoder SDK (ubidium-sdk v0.9.10)"
 license = "MIT"
 repository = "https://github.com/skoky/ubidium-rs"
-homepage = "https://www.raceresult.com/"
+homepage = "https://github.com/skoky/ubidium-rs"
 documentation = "https://docs.rs/ubidium-rs"
 readme = "README.md"
 keywords = ["ubidium", "raceresult", "grpc", "timing", "racetiming"]
@@ -30,6 +30,7 @@ tonic-build = "0.12"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-stream = "0.1"
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 
 [[example]]
 name = "systeminfo"
@@ -38,3 +39,19 @@ path = "examples/systeminfo.rs"
 [[example]]
 name = "passings"
 path = "examples/passings.rs"
+
+[[example]]
+name = "stored_passings"
+path = "examples/stored_passings.rs"
+
+[[example]]
+name = "status"
+path = "examples/status.rs"
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
+
+[[example]]
+name = "server"
+path = "examples/server.rs"
