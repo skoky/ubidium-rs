@@ -38,13 +38,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 /// name to the device ID, mirroring the official Python SDK's
 /// `grpc.ssl_target_name_override`.
 ///
-/// ```no_run
-/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let channel = ubidium::connect("192.168.1.112:443", "U-40153").await?;
-/// let client = ubidium::pb::timing_system_client::TimingSystemClient::new(channel);
-/// # Ok(())
-/// # }
-/// ```
+
 pub async fn connect(
     host: &str,
     device_id: &str,
