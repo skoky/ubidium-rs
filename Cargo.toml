@@ -1,0 +1,40 @@
+[package]
+name = "ubidium-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust gRPC bindings for the Race Result Ubidium timing decoder SDK (ubidium-sdk v0.9.10)"
+license = "MIT"
+repository = "https://github.com/skoky/ubidium-rs"
+homepage = "https://www.raceresult.com/"
+documentation = "https://docs.rs/ubidium-rs"
+readme = "README.md"
+keywords = ["ubidium", "raceresult", "grpc", "timing", "racetiming"]
+categories = ["api-bindings", "network-programming"]
+exclude = ["/.idea"]
+
+[lib]
+name = "ubidium"
+path = "src/lib.rs"
+
+[dependencies]
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+prost = "0.13"
+prost-types = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+# Dependencies used only by the examples.
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-stream = "0.1"
+anyhow = "1"
+
+[[example]]
+name = "systeminfo"
+path = "examples/systeminfo.rs"
+
+[[example]]
+name = "passings"
+path = "examples/passings.rs"
