@@ -1,7 +1,7 @@
 //! `ubidium` — command-line tool for the Race Result **Ubidium** timing
 //! decoder, built on the `ubidium` gRPC bindings.
 //!
-//! Every example in `examples/` is available here as a subcommand:
+//! Subcommands:
 //!
 //! ```text
 //! ubidium systeminfo      --host <host[:port]> --device-id <id>
@@ -13,8 +13,9 @@
 //! ubidium server          [--listen <addr>] [--ping-interval <secs>]
 //! ```
 //!
-//! `--host` and `--device-id` can also be given through the `UBIDIUM_HOST` and
-//! `UBIDIUM_DEVICE_ID` environment variables.
+//! `--host`, `--device-id` and `--ca-cert` can also be given through the
+//! `UBIDIUM_HOST`, `UBIDIUM_DEVICE_ID` and `UBIDIUM_CA_CERT` environment
+//! variables.
 
 mod client;
 mod print;
@@ -25,7 +26,21 @@ use clap::{Args, Parser, Subcommand};
 
 /// Command-line tool for the Race Result Ubidium timing decoder.
 #[derive(Parser, Debug)]
-#[command(name = "ubidium", version)]
+#[command(
+    name = "ubidium",
+    version,
+    author = "skokys@gmail.com",
+    // clap's default help omits the author; this is the default plus a
+    // "name version / author" header.
+    help_template = "\
+{before-help}{name} {version}
+Author: {author}
+
+{about-with-newline}
+{usage-heading} {usage}
+
+{all-args}{after-help}"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -41,6 +56,11 @@ pub struct Target {
     /// Device ID, e.g. `U-40153` (also used as the TLS server name).
     #[arg(long, env = "UBIDIUM_DEVICE_ID")]
     pub device_id: String,
+
+    /// PEM file with the CA certificate to trust instead of the bundled
+    /// Race Result CA (e.g. for a test server or a TLS proxy).
+    #[arg(long, env = "UBIDIUM_CA_CERT", value_name = "PEM")]
+    pub ca_cert: Option<std::path::PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]

@@ -1,6 +1,6 @@
 [package]
 name = "ubidium-rs"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Rust gRPC bindings for the Race Result Ubidium timing decoder SDK (ubidium-sdk v0.9.12)"
@@ -37,13 +37,13 @@ clap = { version = "4.6.9", features = ["derive", "env"], optional = true }
 
 [build-dependencies]
 tonic-prost-build = "0.14.9"
+# Pure-Rust protobuf compiler: no `protoc` needed to build this crate.
+protox = "0.10.0"
 
-# Dependencies used only by the examples.
+# Dependencies used only by the tests.
 [dev-dependencies]
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal"] }
-tokio-stream = "0.1.19"
-anyhow = "1.0.104"
-clap = { version = "4.6.9", features = ["derive"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "time", "process"] }
+tokio-stream = { version = "0.1.19", features = ["net"] }
 
 [[bin]]
 name = "ubidium"
@@ -53,26 +53,7 @@ required-features = ["cli"]
 # rustdoc output-filename collision.
 doc = false
 
-[[example]]
-name = "systeminfo"
-path = "examples/systeminfo.rs"
-
-[[example]]
-name = "passings"
-path = "examples/passings.rs"
-
-[[example]]
-name = "stored_passings"
-path = "examples/stored_passings.rs"
-
-[[example]]
-name = "status"
-path = "examples/status.rs"
-
-[[example]]
-name = "client"
-path = "examples/client.rs"
-
-[[example]]
-name = "server"
-path = "examples/server.rs"
+# Runs the `ubidium` binary, so it needs the `cli` feature.
+[[test]]
+name = "cli"
+required-features = ["cli"]

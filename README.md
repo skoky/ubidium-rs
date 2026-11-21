@@ -5,8 +5,9 @@ Rust gRPC bindings for the [**Race Result**](https://www.raceresult.com/)
 
 Generated from the protobuf definitions shipped with the official
 **ubidium-sdk v0.9.12**. The `.proto` files in [`proto/`](proto/) are compiled
-at build time with [`tonic-prost-build`](https://crates.io/crates/tonic-prost-build)
-(driving `prost` + `protoc`), exposing the protobuf message types and the
+at build time, entirely in Rust: [`protox`](https://crates.io/crates/protox)
+parses them and [`tonic-prost-build`](https://crates.io/crates/tonic-prost-build)
+generates the code. This exposes the protobuf message types and the
 `TimingSystem` / `TimingServer` gRPC clients under the [`ubidium::pb`] module.
 
 The crate also ships the **`ubidium`** command-line tool, which can query a
@@ -19,20 +20,9 @@ see [Command-line tool](#command-line-tool).
 ## Requirements
 
 - A recent Rust toolchain (edition 2024, `rustc` ≥ 1.85).
-- `protoc` (the Protocol Buffers compiler) on the build host, used by
-  `tonic-prost-build`:
-
-  | Platform | Install |
-  |----------|---------|
-  | **Linux** (Debian/Ubuntu) | `sudo apt install protobuf-compiler` |
-  | **Linux** (Fedora) | `sudo dnf install protobuf-compiler` |
-  | **macOS** ([Homebrew](https://brew.sh/)) | `brew install protobuf` |
-  | **Windows** ([winget](https://learn.microsoft.com/windows/package-manager/)) | `winget install protobuf` |
-  | **Windows** ([Chocolatey](https://chocolatey.org/)) | `choco install protoc` |
-
-  Or download a prebuilt binary from the
-  [Protocol Buffers releases](https://github.com/protocolbuffers/protobuf/releases)
-  and put `protoc` on your `PATH`. Verify with `protoc --version`.
+- Nothing else: the `.proto` files are compiled in pure Rust by
+  [`protox`](https://crates.io/crates/protox), so you do **not** need to
+  install `protoc`.
 
 ## Install
 
@@ -71,7 +61,10 @@ ID** (e.g. `U-40153`), signed by the `RACE RESULT TD proxy` CA bundled in
 [`certs/cacert.pem`](certs/cacert.pem) and re-exported as
 [`ubidium::CA_CERT_PEM`]. To connect you therefore pin that CA *and* override
 the expected TLS server name to the device ID, mirroring the official Python
-SDK's `grpc.ssl_target_name_override`.
+SDK's `grpc.ssl_target_name_override`. [`ubidium::connect`] does both.
+
+To trust a different CA (a test server, a TLS proxy, ...) use
+[`ubidium::connect_with_ca`], or `--ca-cert <PEM>` on the command line.
 
 ## Command-line tool
 
@@ -91,8 +84,9 @@ binary talks to it through subcommands; `ubidium --help` lists them and
 
 Every subcommand that talks to a Ubidium needs `--host <host[:port]>` (the port
 defaults to 443) and `--device-id <id>` (e.g. `U-40153`). The device ID is also
-used as the TLS server name (see [TLS](#tls) above). Both can come from the
-environment instead:
+used as the TLS server name (see [TLS](#tls) above). `--ca-cert <PEM>`
+replaces the bundled Race Result CA. All three can come from the environment
+instead (`UBIDIUM_HOST`, `UBIDIUM_DEVICE_ID`, `UBIDIUM_CA_CERT`):
 
 ```bash
 export UBIDIUM_HOST=192.168.1.112
@@ -202,34 +196,29 @@ ubidium server --listen 0.0.0.0:8443
 ubidium server --listen 0.0.0.0:8443 --ping-interval 30
 ```
 
-## Examples
-
-The same functionality is also available as standalone, single-file examples
-in [`examples/`](examples/), which are handy as a starting point for your own
-code:
+## Tests
 
 ```bash
-cargo run --example systeminfo -- --host 192.168.1.112:443 --device-id U-40153
+cargo test
 ```
 
-Available examples: `systeminfo`, `status`, `passings`, `stored_passings`,
-`client`, `server`.
+No Ubidium is needed. The tests cover the library (host/port handling, the
+generated protobuf types, CA pinning and the TLS name check) and the `ubidium`
+binary (output formats, argument parsing, the `TimingServer` behaviour). The
+end-to-end tests in [`tests/`](tests/) run the real binary against a mock
+Ubidium served over TLS with the example certificate in
+[`certs/example-server/`](certs/example-server/).
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
 | `proto/` | Ubidium `.proto` files (from ubidium-sdk v0.9.12) |
-| `build.rs` | Compiles the protos with `tonic-prost-build` |
+| `build.rs` | Compiles the protos with `protox` + `tonic-prost-build` |
 | `src/lib.rs` | `ubidium::pb` generated types + clients, bundled CA cert |
-| `src/bin/ubidium/` | The `ubidium` command-line tool |
-| `examples/systeminfo.rs` | Example: connect and print system info |
-| `examples/passings.rs` | Example: connect and listen for passings |
-| `examples/stored_passings.rs` | Example: download stored passings by ID range |
-| `examples/status.rs` | Example: dump the full Ubidium status |
-| `examples/client.rs` | Example: full client, port of the Go `cmd/client` |
-| `examples/server.rs` | Example: `TimingServer`, port of the Go `cmd/server` |
-| `certs/example-server/` | Example server certificate + key (for `ubidium server`) |
+| `src/bin/ubidium/` | The `ubidium` command-line tool (also a usage example of the library) |
+| `tests/` | Integration tests against a mock Ubidium |
+| `certs/example-server/` | Example server certificate + key (for `ubidium server` and the tests) |
 | `certs/cacert.pem` | `RACE RESULT TD proxy` CA certificate |
 
 ## License

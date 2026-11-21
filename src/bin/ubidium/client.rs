@@ -3,7 +3,7 @@
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, ValueEnum};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -24,9 +24,18 @@ async fn connect(t: &Target) -> Result<TimingSystemClient<Channel>> {
         "Connecting to {} (device id / TLS name: {}) ...",
         t.host, t.device_id
     );
-    let channel = ubidium::connect(&t.host, &t.device_id)
-        .await
-        .map_err(|e| anyhow!("could not connect to {}: {e}", t.host))?;
+    let result = match &t.ca_cert {
+        None => ubidium::connect(&t.host, &t.device_id).await,
+        Some(path) => {
+            let pem = std::fs::read(path)
+                .with_context(|| format!("could not read CA certificate {}", path.display()))?;
+            ubidium::connect_with_ca(&t.host, &t.device_id, &pem).await
+        }
+    };
+    // Keep the cause chain (e.g. the TLS error) for the error report.
+    let channel = result
+        .map_err(anyhow::Error::from_boxed)
+        .with_context(|| format!("could not connect to {}", t.host))?;
     Ok(TimingSystemClient::new(channel))
 }
 
@@ -94,7 +103,7 @@ async fn status_snapshot(t: &Target) -> Result<Status> {
 
 /// `ubidium systeminfo`: print a summary of the status snapshot.
 pub async fn systeminfo(t: &Target) -> Result<()> {
-    print::system_info(&status_snapshot(t).await?);
+    println!("{}", print::system_info(&status_snapshot(t).await?));
     Ok(())
 }
 
@@ -145,7 +154,7 @@ async fn stream_passings(t: &Target, request: CmdGetPassings) -> Result<u64> {
                 match msg.context("reading passing stream")? {
                     Some(resp) => match resp.response {
                         Some(passing_response::Response::Passing(p)) => {
-                            print::passing_detailed(&p);
+                            println!("{}", print::passing_detailed(&p));
                             count += 1;
                         }
                         Some(passing_response::Response::Welcome(w)) => {
@@ -394,7 +403,9 @@ async fn read_status(mut stream: Streaming<StatusResponse>) {
     loop {
         match stream.message().await {
             Ok(Some(msg)) => match msg.response {
-                Some(status_response::Response::Status(s)) => print::status_line(&s),
+                Some(status_response::Response::Status(s)) => {
+                    println!("{}", print::status_line(&s))
+                }
                 Some(status_response::Response::Error(e)) => {
                     println!("Status error: {} ({})", e.message, e.code);
                 }
@@ -413,7 +424,9 @@ async fn read_passings(mut stream: Streaming<PassingResponse>) {
     loop {
         match stream.message().await {
             Ok(Some(msg)) => match msg.response {
-                Some(passing_response::Response::Passing(p)) => print::passing_short("", &p),
+                Some(passing_response::Response::Passing(p)) => {
+                    println!("{}", print::passing_short("", &p))
+                }
                 Some(passing_response::Response::Welcome(w)) => {
                     println!(
                         "Welcome: newest passing id {}, customer {}",
@@ -493,4 +506,160 @@ pub async fn ping(args: &PingArgs) -> Result<()> {
         bail!("no pong received from {}", args.target.device_id);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use cmd_get_passings::{End, EndReference, Start, StartReference};
+
+    /// Parse `stored-passings` arguments on their own.
+    #[derive(Parser)]
+    struct Stored {
+        #[command(flatten)]
+        args: StoredPassingsArgs,
+    }
+
+    fn stored(selectors: &[&str]) -> StoredPassingsArgs {
+        let base = ["test", "--host", "h", "--device-id", "U-1"];
+        Stored::try_parse_from(base.iter().chain(selectors))
+            .unwrap()
+            .args
+    }
+
+    fn target() -> Target {
+        Target {
+            host: "127.0.0.1:1".into(),
+            device_id: "U-1".into(),
+            ca_cert: None,
+        }
+    }
+
+    #[test]
+    fn passing_no_parses_file_and_number() {
+        let n: PassingNo = "3:17".parse().unwrap();
+        assert_eq!((n.file, n.no), (3, 17));
+        let n: PassingNo = "0:0".parse().unwrap();
+        assert_eq!((n.file, n.no), (0, 0));
+    }
+
+    #[test]
+    fn passing_no_rejects_bad_input() {
+        for bad in [
+            "",
+            "3",
+            "3:",
+            ":17",
+            "a:1",
+            "1:b",
+            "-1:2",
+            "1:2:3",
+            "4294967296:1",
+        ] {
+            assert!(
+                bad.parse::<PassingNo>().is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+        let err = "3".parse::<PassingNo>().unwrap_err();
+        assert!(err.contains("FILE:NO"), "{err}");
+    }
+
+    #[test]
+    fn start_selectors_map_to_proto() {
+        let r = |r: StartReference| Start::StartRef(r as i32);
+        let cases: [(&[&str], Start); 5] = [
+            (&["--start-ref", "now"], r(StartReference::Now)),
+            (
+                &["--start-ref", "current-file"],
+                r(StartReference::BeginningOfCurrentFile),
+            ),
+            (
+                &["--start-ref", "first-file"],
+                r(StartReference::BeginningOfFirstFile),
+            ),
+            (&["--start-id", "1000"], Start::Id(1000)),
+            (
+                &["--start-no", "3:1"],
+                Start::No(passing::No { file: 3, no: 1 }),
+            ),
+        ];
+        for (args, expected) in cases {
+            let parsed = stored(&[args, &["--end-count", "1"]].concat());
+            assert_eq!(parsed.start(), expected, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn end_selectors_map_to_proto() {
+        let r = |r: EndReference| End::EndRef(r as i32);
+        let cases: [(&[&str], End); 4] = [
+            (
+                &["--end-ref", "until-stopped"],
+                r(EndReference::UntilStopped),
+            ),
+            (
+                &["--end-ref", "currently-existing"],
+                r(EndReference::CurrentlyExisting),
+            ),
+            (&["--end-ref", "end-of-file"], r(EndReference::EndOfFile)),
+            (&["--end-count", "50"], End::Count(50)),
+        ];
+        for (args, expected) in cases {
+            let parsed = stored(&[&["--start-id", "1"], args].concat());
+            assert_eq!(parsed.end(), expected, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_selector_values_are_rejected() {
+        let base = ["test", "--host", "h", "--device-id", "U-1"];
+        for bad in [
+            &["--start-ref", "yesterday", "--end-count", "1"][..],
+            &["--start-id", "-5", "--end-count", "1"],
+            &["--start-no", "3", "--end-count", "1"],
+            &["--start-id", "1", "--end-count", "-1"],
+            &["--start-id", "1", "--end-ref", "forever"],
+        ] {
+            assert!(
+                Stored::try_parse_from(base.iter().chain(bad)).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ping_rejects_bad_interval_before_connecting() {
+        for interval in [-1.0, f64::NAN, f64::INFINITY] {
+            let args = PingArgs {
+                target: target(),
+                count: 1,
+                interval,
+            };
+            let err = ping(&args).await.unwrap_err();
+            assert!(err.to_string().contains("--interval"), "{interval}: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_reports_unreadable_ca_file() {
+        let t = Target {
+            ca_cert: Some("/nonexistent/ca.pem".into()),
+            ..target()
+        };
+        let err = connect(&t).await.unwrap_err();
+        assert!(
+            err.to_string().contains("could not read CA certificate"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_error_keeps_the_cause() {
+        let err = connect(&target()).await.unwrap_err();
+        assert_eq!(err.to_string(), "could not connect to 127.0.0.1:1");
+        // The cause chain explains *why* (here: connection refused).
+        assert!(err.chain().count() > 1, "{err:#}");
+    }
 }

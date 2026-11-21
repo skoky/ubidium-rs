@@ -115,7 +115,13 @@ impl TimingServer for UbidiumTimingServer {
                                 p.src.as_ref().map(|s| &s.device_id),
                                 "passing",
                             );
-                            print::passing_short(&format!("Got passing from {device_id}: "), &p);
+                            println!(
+                                "{}",
+                                print::passing_short(
+                                    &format!("Got passing from {device_id}: "),
+                                    &p
+                                )
+                            );
                             // Acknowledge the passing (drives the Ubidium's
                             // progress bar), like the Go server.
                             tx.send(Ok(PassingRequest {
@@ -310,4 +316,190 @@ pub async fn run(args: &ServerArgs) -> Result<()> {
         .context("server error")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio_stream::wrappers::TcpListenerStream;
+    use tonic::transport::Channel;
+    use ubidium::pb::{Passing, timing_server_client::TimingServerClient};
+
+    /// Serve `UbidiumTimingServer` over plain TCP (no TLS) on a random port.
+    async fn start(ping_interval: Option<Duration>) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(
+            Server::builder()
+                .add_service(TimingServerServer::new(UbidiumTimingServer {
+                    ping_interval,
+                }))
+                .serve_with_incoming(TcpListenerStream::new(listener)),
+        );
+        addr
+    }
+
+    /// Connect like a Ubidium does (the Ubidium is the gRPC client here).
+    async fn fake_ubidium(addr: SocketAddr) -> TimingServerClient<Channel> {
+        let channel = Channel::from_shared(format!("http://{addr}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        TimingServerClient::new(channel)
+    }
+
+    /// A request carrying the Ubidium's outbound stream and `device-id` header.
+    fn outbound<T>(rx: mpsc::Receiver<T>) -> Request<ReceiverStream<T>> {
+        let mut req = Request::new(ReceiverStream::new(rx));
+        req.metadata_mut()
+            .insert("device-id", "U-TEST".parse().unwrap());
+        req
+    }
+
+    /// Next message from the server, failing the test after 5s.
+    async fn next<T>(stream: &mut Streaming<T>) -> T {
+        tokio::time::timeout(Duration::from_secs(5), stream.message())
+            .await
+            .expect("timed out waiting for the server")
+            .unwrap()
+            .expect("stream closed")
+    }
+
+    #[tokio::test]
+    async fn passing_stream_subscribes_then_acknowledges() {
+        let mut ubidium = fake_ubidium(start(None).await).await;
+        let (tx, rx) = mpsc::channel(4);
+        let mut from_server = ubidium
+            .open_passing_stream(outbound(rx))
+            .await
+            .unwrap()
+            .into_inner();
+
+        // First the server subscribes to everything from the current file on.
+        assert_eq!(
+            next(&mut from_server).await,
+            PassingRequest {
+                cmd: Some(passing_request::Cmd::Get(CmdGetPassings {
+                    start: Some(cmd_get_passings::Start::StartRef(
+                        cmd_get_passings::StartReference::BeginningOfCurrentFile as i32
+                    )),
+                    end: Some(cmd_get_passings::End::EndRef(
+                        cmd_get_passings::EndReference::UntilStopped as i32
+                    )),
+                })),
+            }
+        );
+
+        // Then it acknowledges every passing it receives.
+        for id in [7, 8] {
+            tx.send(PassingResponse {
+                response: Some(passing_response::Response::Passing(Passing {
+                    id,
+                    ..Default::default()
+                })),
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                next(&mut from_server).await,
+                PassingRequest {
+                    cmd: Some(passing_request::Cmd::Ack(CmdAckPassing {
+                        latest: Some(cmd_ack_passing::Latest::Id(id)),
+                    })),
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn status_stream_requests_updates_every_10s() {
+        let mut ubidium = fake_ubidium(start(None).await).await;
+        let (_tx, rx) = mpsc::channel::<StatusResponse>(1);
+        let mut from_server = ubidium
+            .open_status_stream(outbound(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            next(&mut from_server).await,
+            StatusRequest {
+                cmd: Some(status_request::Cmd::Get(CmdGetStatus {
+                    r#continue: true,
+                    push_time: Some(prost_types::Duration {
+                        seconds: 10,
+                        nanos: 0
+                    }),
+                })),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn command_stream_presses_back_once_without_pings() {
+        let mut ubidium = fake_ubidium(start(None).await).await;
+        let (_tx, rx) = mpsc::channel::<CommandResponse>(1);
+        let mut from_server = ubidium
+            .open_command_stream(outbound(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            next(&mut from_server).await,
+            CommandRequest {
+                id: 1,
+                cmd: Some(command_request::Cmd::PressKey(CmdPressKey {
+                    key: Key::Back as i32
+                })),
+            }
+        );
+        // Keep-alive pings are off by default: nothing else arrives.
+        let more = tokio::time::timeout(Duration::from_millis(200), from_server.message()).await;
+        assert!(more.is_err(), "unexpected command: {more:?}");
+    }
+
+    #[tokio::test]
+    async fn command_stream_sends_keepalive_pings() {
+        let addr = start(Some(Duration::from_millis(20))).await;
+        let mut ubidium = fake_ubidium(addr).await;
+        let (_tx, rx) = mpsc::channel::<CommandResponse>(1);
+        let mut from_server = ubidium
+            .open_command_stream(outbound(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(next(&mut from_server).await.id, 1, "PressKey first");
+        for id in [2, 3] {
+            assert_eq!(
+                next(&mut from_server).await,
+                CommandRequest {
+                    id,
+                    cmd: Some(command_request::Cmd::Ping(CmdPing {})),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn device_id_comes_from_metadata() {
+        assert_eq!(device_id_of(&Request::new(())), UNKNOWN);
+        let mut req = Request::new(());
+        req.metadata_mut()
+            .insert("device-id", "U-40153".parse().unwrap());
+        assert_eq!(device_id_of(&req), "U-40153");
+    }
+
+    #[test]
+    fn device_id_is_learned_only_while_unknown() {
+        let mut id = UNKNOWN.to_string();
+        learn_device_id(&mut id, Some(&String::new()), "test");
+        assert_eq!(id, UNKNOWN, "empty candidates are ignored");
+        learn_device_id(&mut id, None, "test");
+        assert_eq!(id, UNKNOWN);
+        learn_device_id(&mut id, Some(&"U-1".to_string()), "test");
+        assert_eq!(id, "U-1");
+        learn_device_id(&mut id, Some(&"U-2".to_string()), "test");
+        assert_eq!(id, "U-1", "a known ID is kept");
+    }
 }
