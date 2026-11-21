@@ -234,4 +234,8 @@ Available examples: `systeminfo`, `status`, `passings`, `stored_passings`,
 
 ## License
 
-MIT
+Licensed under the [MIT License](LICENSE).
+
+The MIT license covers the code in this repository. The `.proto` files in
+[`proto/`](proto/) and the certificates in [`certs/`](certs/) come from Race
+Result's ubidium-sdk and remain subject to Race Result's terms.
