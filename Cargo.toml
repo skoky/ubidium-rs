@@ -1,9 +1,9 @@
 [package]
 name = "ubidium-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Rust gRPC bindings for the Race Result Ubidium timing decoder SDK (ubidium-sdk v0.9.10)"
+description = "Rust gRPC bindings for the Race Result Ubidium timing decoder SDK (ubidium-sdk v0.9.12)"
 license = "MIT"
 repository = "https://github.com/skoky/ubidium-rs"
 homepage = "https://github.com/skoky/ubidium-rs"
@@ -17,20 +17,41 @@ exclude = ["/.idea"]
 name = "ubidium"
 path = "src/lib.rs"
 
+[features]
+default = ["cli"]
+# Builds the `ubidium` command-line tool. Library-only users can opt out with
+# `default-features = false`.
+cli = ["dep:tokio", "dep:tokio-stream", "dep:anyhow", "dep:clap"]
+
 [dependencies]
-tonic = { version = "0.12", features = ["tls", "tls-roots"] }
-prost = "0.13"
-prost-types = "0.13"
+tonic = { version = "0.14.9", features = ["tls-ring", "tls-native-roots"] }
+tonic-prost = "0.14.9"
+prost = "0.14.6"
+prost-types = "0.14.6"
+
+# Dependencies used only by the `ubidium` binary (feature `cli`).
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal"], optional = true }
+tokio-stream = { version = "0.1.19", optional = true }
+anyhow = { version = "1.0.104", optional = true }
+clap = { version = "4.6.9", features = ["derive", "env"], optional = true }
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14.9"
 
 # Dependencies used only by the examples.
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
-tokio-stream = "0.1"
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-stream = "0.1.19"
+anyhow = "1.0.104"
+clap = { version = "4.6.9", features = ["derive"] }
+
+[[bin]]
+name = "ubidium"
+path = "src/bin/ubidium/main.rs"
+required-features = ["cli"]
+# The library is also called `ubidium`; skip the binary's docs to avoid a
+# rustdoc output-filename collision.
+doc = false
 
 [[example]]
 name = "systeminfo"

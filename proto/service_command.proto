@@ -19,6 +19,8 @@ message CommandRequest {
     CmdGetSettings get_settings = 16;                   // gets settings
     CmdSetSettings set_settings = 17;                   // sets settings
     CmdReboot reboot = 18;                 		          // reboots Ubidium
+    CmdPing ping = 19;                                  // used to keep connection alive
+    CmdStopClient stop_client = 20;                     // stops a connected client
   }
 }
 /*
@@ -35,6 +37,8 @@ message CommandResponse {
     CmdGetSettingsResponse get_settings_response = 16;  // response to a get_settings command
     CmdSetSettingsResponse set_settings_response = 17;  // response to a set_settings command
     CmdRebootResponse reboot_response = 18;		          // response to a reboot command
+    CmdPong pong = 19;                                  // response to a ping command
+    CmdStopClientResponse stop_client_response = 20;    // response to a stop_client command
   }
 }
 
@@ -146,6 +150,31 @@ message CmdReboot {
 CmdRebootResponse is the response to a CmdReboot call.
  */
 message CmdRebootResponse {
+}
+
+/*
+CmdPing has no effect other than to keep the connection alive.
+ */
+message CmdPing {
+}
+
+/*
+CmdPong is an empty response to a CmdPing command.
+ */
+message CmdPong {
+}
+
+/*
+CmdStopClient is used by a server to stop a client that is connected to it.
+ */
+message CmdStopClient {
+  optional bool disable_auto_connect = 1;                                   // if true, client's "enable on startup" setting will be disabled
+}
+
+/*
+CmdStopClientResponse is an empty response to a CmdStopClient command.
+ */
+message CmdStopClientResponse {
 }
 
 /*

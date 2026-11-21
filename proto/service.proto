@@ -36,8 +36,10 @@ service TimingSystem {
   rpc SetSettings(CmdSetSettings) returns (CmdSetSettingsResponse) {}
   // GetSetting receives the values of a set of settings.
   rpc GetSettings(CmdGetSettings) returns (CmdGetSettingsResponse) {}
-    // Reboot sends a reboot command.
+  // Reboot sends a reboot command.
   rpc Reboot(CmdReboot) returns (CmdRebootResponse) {}
+  // Ping can be used to keep the connection alive.
+  rpc Ping(CmdPing) returns (CmdPong) {}
 }
 
 /*
