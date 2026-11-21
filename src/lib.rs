@@ -37,8 +37,6 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 /// bundled [`CA_CERT_PEM`] CA. We pin that CA and override the expected domain
 /// name to the device ID, mirroring the official Python SDK's
 /// `grpc.ssl_target_name_override`.
-///
-
 pub async fn connect(
     host: &str,
     device_id: &str,
